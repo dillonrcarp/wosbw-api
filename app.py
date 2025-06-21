@@ -3,6 +3,7 @@ from flask import Flask
 import socketio
 import eventlet
 import threading
+import os
 
 # === CONFIG ===
 MIRROR_ID = "ad66e7bc-81d9-435e-963c-a6159cb13282"
@@ -25,8 +26,6 @@ sio = socketio.Client(logger=True, engineio_logger=True)
 @sio.event
 def connect():
     print("[INFO] Connected to WOS server")
-    # Join the mirror channel
-    sio.emit('join', {'room': MIRROR_ID})
 
 @sio.on('word')
 def on_word(data):
@@ -36,13 +35,15 @@ def on_word(data):
         big_word = word.upper()
         print(f"[UPDATE] New big word: {big_word}")
 
+# === SOCKET.IO CONNECT FUNCTION ===
 def start_socket():
     try:
+        # Append channel as query string in URL
+        url = f"https://wos.gg/socket.io/?channel={MIRROR_ID}&EIO=4"
         sio.connect(
-            'https://wos.gg',
+            url,
             transports=['websocket'],
-            socketio_path='socket.io',
-            query_string={'channel': MIRROR_ID}
+            socketio_path='socket.io'
         )
         sio.wait()
     except Exception as e:
@@ -52,6 +53,6 @@ def start_socket():
 th = threading.Thread(target=start_socket, daemon=True)
 th.start()
 
-# Serve Flask with Eventlet
 if __name__ == '__main__':
-    eventlet.wsgi.server(eventlet.listen(('', 10000)), app)
+    port = int(os.environ.get('PORT', 10000))
+    eventlet.wsgi.server(eventlet.listen(('', port)), app)
