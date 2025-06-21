@@ -1,51 +1,61 @@
 import os
-import re
-from flask import Flask, Response
-import requests
-from bs4 import BeautifulSoup
+import logging
+from flask import Flask, Response, jsonify
 
-# 1) Create the app first
+# ——— App & Logging —————————————————————————————
+logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 
-# 2) Health check for Render
+# ——— Health Check ————————————————————————————
 @app.route("/healthz")
 def healthz():
     return "OK", 200
 
-# 3) Mirror URL (override via env var if you like)
-TARGET_URL = os.getenv(
-    "WOS_MIRROR_URL",
-    "https://wos.gg/r/ad66e7bc-81d9-435e7bc-81d9-435e-963c-a6159cb13282"
-)
+# ——— Global State & Updaters ————————————————————
+big_word = None
+big_word_length = 0
+all_letters = []
 
+def update_big_word(new_word):
+    """
+    Called by your scraper thread whenever it finds a candidate.
+    Only updates if the new word is strictly longer.
+    """
+    global big_word, big_word_length
+    if new_word and len(new_word) > big_word_length:
+        big_word = new_word.upper()
+        big_word_length = len(new_word)
+        logging.info(f"Big word updated: {big_word} (length: {big_word_length})")
+        return True
+    return False
+
+def update_all_letters(letters_list):
+    """
+    Called by your scraper to keep the full pool of letters.
+    """
+    global all_letters
+    all_letters = letters_list
+    logging.debug(f"All letters updated ({len(letters_list)}): {', '.join(letters_list)}")
+
+# ——— API Endpoints ————————————————————————————
 @app.route("/bigword")
-def big_word():
-    # Try HTML scrape
-    try:
-        res = requests.get(TARGET_URL, timeout=5)
-        res.raise_for_status()
-        soup = BeautifulSoup(res.text, "html.parser")
-        hit = soup.find("div", class_=re.compile(r"Slot_hitMax"))
-        if hit:
-            letters = hit.find_all("span", class_=re.compile(r"Slot_letter"))
-            word = "".join(letter.get_text(strip=True) for letter in letters)
-            if word:
-                return Response(word, mimetype="text/plain")
-    except Exception:
-        pass
-
-    # Fallback to JSON endpoint
-    try:
-        j = requests.get(TARGET_URL + ".json", timeout=5).json()
-        word = j.get("big") or j.get("word")
-        if word:
-            return Response(word, mimetype="text/plain")
-    except Exception:
-        pass
-
-    # Nothing found
+def get_big_word_text():
+    """Plain-text endpoint for StreamElements/Nightbot."""
+    if big_word:
+        return Response(big_word, mimetype="text/plain")
     return Response("No big word found", status=404, mimetype="text/plain")
 
+@app.route("/api/bigword")
+def get_big_word_json():
+    """Machine-readable JSON endpoint."""
+    return jsonify({
+        "word": big_word,
+        "length": big_word_length,
+        "all_letters": all_letters,
+        "status": "found" if big_word else "not_found"
+    })
+
+# ——— Run Locally ——————————————————————————————
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
