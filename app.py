@@ -1,33 +1,4 @@
-# Dockerfile
-```dockerfile
-FROM python:3.11-slim
-
-# Install Chrome and Chromedriver
-RUN apt-get update && apt-get install -y \
-    chromium chromium-driver \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set working directory
-WORKDIR /app
-
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application code
-COPY . .
-
-# Expose port
-EXPOSE 5000
-
-# Start the application
-CMD ["gunicorn", "app:app", "-b", "0.0.0.0:5000", "--workers", "1", "--timeout", "120"]
-```
-
----
-
 # app.py
-```python
 from flask import Flask, Response
 import os
 from threading import Thread
@@ -57,7 +28,6 @@ def get_big_word():
 # Background scraping loop
 def scrape_loop():
     global global_big_word
-    # Selenium headless setup
     options = Options()
     options.add_argument('--headless')
     options.add_argument('--disable-gpu')
@@ -68,17 +38,17 @@ def scrape_loop():
     while True:
         try:
             driver.get(MIRROR_URL)
-            time.sleep(3)  # allow page JS to render
+            time.sleep(3)  # allow JS to render
             soup = BeautifulSoup(driver.page_source, 'html.parser')
             words = [w.text.strip() for w in soup.select('.guessed-words .word')]
             if words:
                 longest = max(words, key=len)
                 if longest != last_word:
                     global_big_word = longest.upper()
-                    print(f'[UPDATE] New big word: {global_big_word}')
+                    print(f"[UPDATE] New big word: {global_big_word}")
                     last_word = longest
         except Exception as e:
-            print(f'[ERROR] {e}')
+            print(f"[ERROR] {e}")
         time.sleep(CHECK_INTERVAL)
 
 # Start scraper thread
@@ -88,4 +58,3 @@ t.start()
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
-```
