@@ -1,35 +1,49 @@
+import os
+import re
 from flask import Flask, Response
 import requests
 from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
-# replace with your actual mirror URL
-TARGET_URL = "https://wos.gg/r/ad66e7bc-81d9-435e-963c-a6159cb13282"
+# Mirror URL (can override via env var)
+TARGET_URL = os.getenv(
+    "WOS_MIRROR_URL",
+    "https://wos.gg/r/ad66e7bc-81d9-435e-963c-a6159cb13282"
+)
 
 @app.route("/bigword")
 def big_word():
-    res = requests.get(TARGET_URL, timeout=5)
-    if res.status_code != 200:
-        return Response("Error fetching source", status=502, mimetype="text/plain")
+    # 1) Try fetching the HTML
+    try:
+        res = requests.get(TARGET_URL, timeout=5)
+        res.raise_for_status()
+    except Exception as e:
+        return Response(f"Error fetching source: {e}", status=502, mimetype="text/plain")
 
     soup = BeautifulSoup(res.text, "html.parser")
 
-    # find the slot div whose class contains "Slot_hitMax"
-    hit = soup.find(
-        "div",
-        class_=lambda c: c and "Slot_hitMax" in c
-    )
-    if not hit:
-        return Response("No big word found", status=404, mimetype="text/plain")
+    # 2) Look for the div whose class contains "Slot_hitMax"
+    hit = soup.find("div", class_=re.compile(r"Slot_hitMax"))
+    if hit:
+        letters = hit.find_all("span", class_=re.compile(r"Slot_letter"))
+        word = "".join(letter.get_text(strip=True) for letter in letters)
+        if word:
+            return Response(word, mimetype="text/plain")
 
-    # collect each letter in order
-    letters = hit.select("span.Slot_letter__WYkoZ")
-    word = "".join(letter.get_text(strip=True) for letter in letters)
+    # 3) Fallback: try the JSON endpoint
+    try:
+        json_resp = requests.get(TARGET_URL + ".json", timeout=5)
+        data = json_resp.json()
+        word = data.get("big") or data.get("word")
+        if word:
+            return Response(word, mimetype="text/plain")
+    except Exception:
+        pass
 
-    # return as plain text
-    return Response(word, mimetype="text/plain")
+    # 4) Nothing found
+    return Response("No big word found", status=404, mimetype="text/plain")
 
 if __name__ == "__main__":
-    # for local testing
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
