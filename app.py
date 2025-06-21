@@ -1,60 +1,56 @@
-# app.py
+import asyncio
+from collections import Counter
 from flask import Flask, Response
-import os
-from threading import Thread
-import time
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+from pyppeteer import launch
 
 app = Flask(__name__)
 
-# Configuration
-MIRROR_URL = "https://wos.gg/r/ad66e7bc-81d9-435e-963c-a6159cb13282"
-CHECK_INTERVAL = 10  # seconds between checks
+# 1) Render the WOS mirror page and grab the HTML
+async def fetch_html(url):
+    browser = await launch(args=["--no-sandbox"])
+    page = await browser.newPage()
+    await page.goto(url, waitUntil="networkidle2")
+    html = await page.content()
+    await browser.close()
+    return html
 
-# In-memory store for the current big word
-global_big_word = None
+# 2) Parse the letter/count pairs out of the scramble
+def parse_letter_counts(html):
+    soup = BeautifulSoup(html, "html.parser")
+    counts = Counter()
+    for div in soup.select(".Game_letter__jIgKJ"):
+        for li in div.select("ul li"):
+            letter = li.contents[0].strip().lower()
+            count  = int(li.find("span").get_text())
+            counts[letter] += count
+    return counts
 
-@app.route('/')
-def home():
-    return Response('WOS Big Word API running.', mimetype='text/plain')
+# 3) Find all the longest words you can build
+def find_big_words(available_counts, dict_path="enable1.txt"):
+    longest, max_len = [], 0
+    with open(dict_path) as f:
+        for w in f:
+            word = w.strip().lower()
+            freq = Counter(word)
+            # can’t use a letter more than we have
+            if all(freq[ch] <= available_counts[ch] for ch in freq):
+                l = len(word)
+                if l > max_len:
+                    longest, max_len = [word], l
+                elif l == max_len:
+                    longest.append(word)
+    return longest
 
-@app.route('/bigword')
-def get_big_word():
-    """Return the current big word in plain text, or fallback message."""
-    return Response(global_big_word or 'The big word has not been found yet.', mimetype='text/plain')
+@app.route("/")
+def big_word():
+    url = "https://wos.gg/r/ad66e7bc-81d9-435e963c-a6159cb13282"
+    # fetch + parse
+    html = asyncio.get_event_loop().run_until_complete(fetch_html(url))
+    counts = parse_letter_counts(html)
+    candidates = find_big_words(counts)
+    # return first—or empty string if none
+    return Response(candidates[0] if candidates else "", mimetype="text/plain")
 
-# Background scraping loop
-def scrape_loop():
-    global global_big_word
-    options = Options()
-    options.add_argument('--headless')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--no-sandbox')
-    driver = webdriver.Chrome(options=options)
-
-    last_word = ""
-    while True:
-        try:
-            driver.get(MIRROR_URL)
-            time.sleep(3)  # allow JS to render
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
-            words = [w.text.strip() for w in soup.select('.guessed-words .word')]
-            if words:
-                longest = max(words, key=len)
-                if longest != last_word:
-                    global_big_word = longest.upper()
-                    print(f"[UPDATE] New big word: {global_big_word}")
-                    last_word = longest
-        except Exception as e:
-            print(f"[ERROR] {e}")
-        time.sleep(CHECK_INTERVAL)
-
-# Start scraper thread
-t = Thread(target=scrape_loop, daemon=True)
-t.start()
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0")
