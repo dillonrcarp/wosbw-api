@@ -1,56 +1,35 @@
-import asyncio
-from collections import Counter
 from flask import Flask, Response
+import requests
 from bs4 import BeautifulSoup
-from pyppeteer import launch
 
 app = Flask(__name__)
 
-# 1) Render the WOS mirror page and grab the HTML
-async def fetch_html(url):
-    browser = await launch(args=["--no-sandbox"])
-    page = await browser.newPage()
-    await page.goto(url, waitUntil="networkidle2")
-    html = await page.content()
-    await browser.close()
-    return html
+# replace with your actual mirror URL
+TARGET_URL = "https://wos.gg/r/ad66e7bc-81d9-435e-963c-a6159cb13282"
 
-# 2) Parse the letter/count pairs out of the scramble
-def parse_letter_counts(html):
-    soup = BeautifulSoup(html, "html.parser")
-    counts = Counter()
-    for div in soup.select(".Game_letter__jIgKJ"):
-        for li in div.select("ul li"):
-            letter = li.contents[0].strip().lower()
-            count  = int(li.find("span").get_text())
-            counts[letter] += count
-    return counts
-
-# 3) Find all the longest words you can build
-def find_big_words(available_counts, dict_path="enable1.txt"):
-    longest, max_len = [], 0
-    with open(dict_path) as f:
-        for w in f:
-            word = w.strip().lower()
-            freq = Counter(word)
-            # can’t use a letter more than we have
-            if all(freq[ch] <= available_counts[ch] for ch in freq):
-                l = len(word)
-                if l > max_len:
-                    longest, max_len = [word], l
-                elif l == max_len:
-                    longest.append(word)
-    return longest
-
-@app.route("/")
+@app.route("/bigword")
 def big_word():
-    url = "https://wos.gg/r/ad66e7bc-81d9-435e963c-a6159cb13282"
-    # fetch + parse
-    html = asyncio.get_event_loop().run_until_complete(fetch_html(url))
-    counts = parse_letter_counts(html)
-    candidates = find_big_words(counts)
-    # return first—or empty string if none
-    return Response(candidates[0] if candidates else "", mimetype="text/plain")
+    res = requests.get(TARGET_URL, timeout=5)
+    if res.status_code != 200:
+        return Response("Error fetching source", status=502, mimetype="text/plain")
+
+    soup = BeautifulSoup(res.text, "html.parser")
+
+    # find the slot div whose class contains "Slot_hitMax"
+    hit = soup.find(
+        "div",
+        class_=lambda c: c and "Slot_hitMax" in c
+    )
+    if not hit:
+        return Response("No big word found", status=404, mimetype="text/plain")
+
+    # collect each letter in order
+    letters = hit.select("span.Slot_letter__WYkoZ")
+    word = "".join(letter.get_text(strip=True) for letter in letters)
+
+    # return as plain text
+    return Response(word, mimetype="text/plain")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0")
+    # for local testing
+    app.run(host="0.0.0.0", port=5000)
